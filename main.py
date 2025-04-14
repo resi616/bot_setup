@@ -7,7 +7,7 @@ from datetime import datetime
 
 # === CONFIGURATION ===
 TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
-CHAT_ID = '607429363'
+CHAT_ID = '6074293635'
 EXCHANGE = ccxt.binance()
 TIMEFRAME = '15m'
 CHECK_INTERVAL = 60 * 15  # 15 menit
@@ -46,6 +46,13 @@ def compute_rsi(closes, period=14):
         rs = up / down if down != 0 else 0
         rsi.append(100. - 100. / (1. + rs))
     return rsi
+
+def get_chat_id():
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+    response = requests.get(url)
+    print(response.json())  # Akan tampilkan chat ID kamu
+
+get_chat_id()
 
 def detect_signal(symbol, data):
     closes = data[:, 4]
