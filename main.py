@@ -6,7 +6,7 @@ import numpy as np
 from datetime import datetime
 
 # === CONFIGURATION ===
-TELEGRAM_TOKEN = '7723680969:AAFDk9o23q0_mCKdNbNo8FcxCdd_Tw5GNgU'
+TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
 CHAT_ID = '607429363'
 EXCHANGE = ccxt.binance()
 TIMEFRAME = '15m'
@@ -16,7 +16,8 @@ CHECK_INTERVAL = 60 * 15  # 15 menit
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": msg}
-    requests.post(url, data=payload)
+    requests.post(url, data=payload.encode('utf-8'), headers={'Content-Type': 'application/x-www-form-urlencoded'})
+
 
 def get_ohlcv(symbol, timeframe, limit=100):
     try:
