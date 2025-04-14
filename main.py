@@ -16,7 +16,11 @@ CHECK_INTERVAL = 60 * 15  # 15 menit
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": msg}
-    requests.post(url, data=payload.encode('utf-8'), headers={'Content-Type': 'application/x-www-form-urlencoded'})
+    try:
+        requests.post(url, json=payload)  # pakai json biar aman emoji/UTF-8
+    except Exception as e:
+        print(f"Gagal kirim pesan: {e}")
+
 
 
 def get_ohlcv(symbol, timeframe, limit=100):
