@@ -47,12 +47,6 @@ def compute_rsi(closes, period=14):
         rsi.append(100. - 100. / (1. + rs))
     return rsi
 
-def get_chat_id():
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-    response = requests.get(url)
-    print(response.json())  # Akan tampilkan chat ID kamu
-
-get_chat_id()
 
 def detect_signal(symbol, data):
     closes = data[:, 4]
