@@ -7,7 +7,7 @@ from datetime import datetime
 
 # === CONFIGURATION ===
 TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
-CHAT_ID = '-4609137167'
+CHAT_ID = '-1002643789070'
 EXCHANGE = ccxt.binance()
 TIMEFRAME = '15m'
 CHECK_INTERVAL = 60 * 15  # 15 menit
@@ -17,9 +17,11 @@ def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": msg}
     try:
-        requests.post(url, json=payload)  # pakai json biar aman emoji/UTF-8
+        response = requests.post(url, json=payload)
+        print("Telegram response:", response.text)
     except Exception as e:
         print(f"Gagal kirim pesan: {e}")
+
 
 
 
