@@ -7,7 +7,7 @@ from datetime import datetime
 
 # === CONFIGURATION ===
 TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
-CHAT_ID = '6074293635'
+CHAT_ID = '4609137167'
 EXCHANGE = ccxt.binance()
 TIMEFRAME = '15m'
 CHECK_INTERVAL = 60 * 15  # 15 menit
