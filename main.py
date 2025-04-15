@@ -8,10 +8,7 @@ from datetime import datetime
 # === CONFIGURATION ===
 TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
 CHAT_ID = '-1002643789070'
-EXCHANGE = ccxt.binance({
-    'options': {'defaultType': 'future'}
-})
-
+EXCHANGE = ccxt.binance()
 TIMEFRAME = '15m'
 CHECK_INTERVAL = 60 * 15  # 15 menit
 
@@ -87,8 +84,7 @@ while True:
     print(f"[{datetime.now()}] Scanning market...")
     try:
         symbols = [m['symbol'] for m in EXCHANGE.load_markets().values()
-           if m['quote'] == 'USDT' and m['contract'] and '/' in m['symbol']]
-
+                   if m['quote'] == 'USDT' and m['spot'] and '/' in m['symbol']]
 
         for symbol in symbols:
             data = get_ohlcv(symbol, TIMEFRAME)
