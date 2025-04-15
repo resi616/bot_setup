@@ -10,9 +10,10 @@ TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
 CHAT_ID = '-1002643789070'
 EXCHANGE = ccxt.binance()
 TIMEFRAME = '15m'
+SWING_TIMEFRAME = '1h'
 CHECK_INTERVAL = 60 * 15  # 15 menit
 
-sent_signals = {}
+sent_signals = set()
 
 # === TOOLS ===
 def send_telegram(msg):
@@ -47,76 +48,46 @@ def compute_rsi(closes, period=14):
         rsi.append(100. - 100. / (1. + rs))
     return rsi
 
+def find_swing_high_lows(data):
+    highs = data[:, 2]
+    lows = data[:, 3]
+    swing_high = max(highs[-10:])
+    swing_low = min(lows[-10:])
+    return swing_high, swing_low
+
 def detect_signal(symbol, data):
     closes = data[:, 4]
     highs = data[:, 2]
-    lows = data[:, 3]
     volumes = data[:, 5]
 
     last_close = closes[-1]
     rsi = compute_rsi(closes)
-    avg_volume = np.mean(volumes[-10:-1])
+    breakout = last_close > max(highs[-5:-1])
+    volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
+    rsi_condition = rsi[-1] > 60
 
-    # === LONG SETUP ===
-    long_breakout = last_close > max(highs[-5:-1])
-    long_volume = volumes[-1] > 1.5 * avg_volume
-    long_rsi = rsi[-1] > 60
+    if breakout and volume_spike and rsi_condition:
+        swing_data = get_ohlcv(symbol, SWING_TIMEFRAME)
+        if swing_data is None:
+            return None
+        swing_high, swing_low = find_swing_high_lows(swing_data)
 
-    if long_breakout and long_volume and long_rsi:
         entry = last_close
-        tp1 = entry * 1.015
-        tp2 = entry * 1.03
-        tp3 = entry * 1.05
-        tp4 = entry * 1.08
-        sl = entry * 0.97
+        tp1 = swing_high
+        sl = swing_low
 
-        signal_data = ("LONG", round(entry, 4), round(tp1, 4), round(tp2, 4), round(tp3, 4), round(tp4, 4), round(sl, 4))
-        if sent_signals.get(symbol) == signal_data:
-            return None  # sama, skip
-
-        sent_signals[symbol] = signal_data
+        signal_key = f"{symbol}-{entry:.4f}-{tp1:.4f}-{sl:.4f}"
+        if signal_key in sent_signals:
+            return None  # Skip duplikat
+        sent_signals.add(signal_key)
 
         msg = (
-            f"🟢 SIGNAL LONG: {symbol}\n"
+            f"🟢 SIGNAL ENTRY: {symbol}\n"
             f"Entry: {entry:.4f}\n"
-            f"TP1: {tp1:.4f}\n"
-            f"TP2: {tp2:.4f}\n"
-            f"TP3: {tp3:.4f}\n"
-            f"TP4: {tp4:.4f}\n"
+            f"TP: {tp1:.4f}\n"
             f"SL: {sl:.4f}"
         )
         return msg
-
-    # === SHORT SETUP ===
-    short_breakdown = last_close < min(lows[-5:-1])
-    short_volume = volumes[-1] > 1.5 * avg_volume
-    short_rsi = rsi[-1] < 40
-
-    if short_breakdown and short_volume and short_rsi:
-        entry = last_close
-        tp1 = entry * 0.985
-        tp2 = entry * 0.97
-        tp3 = entry * 0.95
-        tp4 = entry * 0.92
-        sl = entry * 1.03
-
-        signal_data = ("SHORT", round(entry, 4), round(tp1, 4), round(tp2, 4), round(tp3, 4), round(tp4, 4), round(sl, 4))
-        if sent_signals.get(symbol) == signal_data:
-            return None  # sama, skip
-
-        sent_signals[symbol] = signal_data
-
-        msg = (
-            f"🔴 SIGNAL SHORT: {symbol}\n"
-            f"Entry: {entry:.4f}\n"
-            f"TP1: {tp1:.4f}\n"
-            f"TP2: {tp2:.4f}\n"
-            f"TP3: {tp3:.4f}\n"
-            f"TP4: {tp4:.4f}\n"
-            f"SL: {sl:.4f}"
-        )
-        return msg
-
     return None
 
 # === MAIN LOOP ===
@@ -139,5 +110,5 @@ while True:
 
     except Exception as e:
         print(f"ERROR: {e}")
-        send_telegram(f"❌ Error saat scan: {e}")
+        send_telegram(f"\u274c Error saat scan: {e}")
         time.sleep(60)
