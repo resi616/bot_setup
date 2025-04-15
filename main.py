@@ -87,6 +87,18 @@ def find_swing_high_lows(data):
     swing_low = min(lows[-20:])
     return swing_high, swing_low
 
+def detect_trend(data):
+    closes = data[:, 4]
+    sma_fast = np.mean(closes[-10:])
+    sma_slow = np.mean(closes[-30:])
+    
+    if sma_fast > sma_slow * 1.01:
+        return "uptrend"
+    elif sma_fast < sma_slow * 0.99:
+        return "downtrend"
+    else:
+        return "sideways"
+
 def generate_chart(symbol, data, entry, tp, sl, rsi_last):
     df = pd.DataFrame(data, columns=["Time", "Open", "High", "Low", "Close", "Volume"])
     df["Time"] = pd.to_datetime(df["Time"], unit='ms')
@@ -113,43 +125,70 @@ def detect_signal(symbol, data):
 
     last_close = closes[-1]
     rsi = compute_rsi(closes, period=14)
-    breakout = last_close > max(highs[-5:-1])
-    volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
-    rsi_condition = 65 <= rsi[-1] <= 75
+    trend = detect_trend(data)
 
-    if breakout and volume_spike and rsi_condition:
-        swing_data = get_ohlcv(symbol, SWING_TIMEFRAME)
-        if swing_data is None:
-            return None
-        swing_high, swing_low = find_swing_high_lows(swing_data)
+    swing_data = get_ohlcv(symbol, SWING_TIMEFRAME)
+    if swing_data is None:
+        return None
+    swing_high, swing_low = find_swing_high_lows(swing_data)
+    atr = compute_atr(data, period=14)
+    if atr == 0:
+        return None
 
-        atr = compute_atr(data, period=14)
-        if atr == 0:
-            return None
+    if trend == "uptrend":
+        breakout = last_close > max(highs[-5:-1])
+        volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
+        rsi_condition = 60 <= rsi[-1] <= 75
 
-        sl = min(swing_low, last_close - 1.5 * atr)
-        risk = last_close - sl
-        tp = last_close + (risk * MIN_RR)
-        tp = min(tp, swing_high * 1.05)
+        if breakout and volume_spike and rsi_condition:
+            sl = min(swing_low, last_close - 1.5 * atr)
+            risk = last_close - sl
+            tp = last_close + (risk * MIN_RR)
+            tp = min(tp, swing_high * 1.05)
 
-        if risk <= 0 or (tp - last_close) / risk < MIN_RR:
-            return None
+            if risk <= 0 or (tp - last_close) / risk < MIN_RR:
+                return None
 
-        signal_key = f"{symbol}-{last_close:.4f}-{tp:.4f}-{sl:.4f}"
-        if signal_key in sent_signals:
-            return None
-        sent_signals.add(signal_key)
+            signal_key = f"{symbol}-{last_close:.4f}-{tp:.4f}-{sl:.4f}"
+            if signal_key in sent_signals:
+                return None
+            sent_signals.add(signal_key)
 
-        msg = (
-            f"🟢 SIGNAL ENTRY: {symbol}\n"
-            f"Entry: {last_close:.4f}\n"
-            f"TP: {tp:.4f}\n"
-            f"SL: {sl:.4f}\n"
-            f"RR: {(tp - last_close) / (last_close - sl):.2f}:1"
-        )
+            msg = (
+                f"🟢 TREND STRATEGY: {symbol}\n"
+                f"Entry: {last_close:.4f}\nTP: {tp:.4f}\nSL: {sl:.4f}\nRR: {(tp - last_close) / (last_close - sl):.2f}:1"
+            )
+            chart_path = generate_chart(symbol, data, last_close, tp, sl, rsi[-1])
+            return msg, chart_path
 
-        chart_path = generate_chart(symbol, data, last_close, tp, sl, rsi[-1])
-        return msg, chart_path
+    elif trend == "sideways":
+        resistance = max(highs[-20:])
+        support = min(data[:, 3][-20:])
+        fakeout_check = last_close < resistance * 1.005 
+
+        breakout = last_close > resistance
+        volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
+        rsi_condition = rsi[-1] < 75
+
+        if breakout and volume_spike and rsi_condition and not fakeout_check:
+            sl = min(support, last_close - 1.5 * atr)
+            risk = last_close - sl
+            tp = last_close + risk * MIN_RR
+
+            if risk <= 0 or (tp - last_close) / risk < MIN_RR:
+                return None
+
+            signal_key = f"{symbol}-{last_close:.4f}-{tp:.4f}-{sl:.4f}"
+            if signal_key in sent_signals:
+                return None
+            sent_signals.add(signal_key)
+
+            msg = (
+                f"🟡 SIDEWAYS STRATEGY: {symbol}\n"
+                f"Entry: {last_close:.4f}\nTP: {tp:.4f}\nSL: {sl:.4f}\nRR: {(tp - last_close) / (last_close - sl):.2f}:1"
+            )
+            chart_path = generate_chart(symbol, data, last_close, tp, sl, rsi[-1])
+            return msg, chart_path
     return None
 
 # === MAIN LOOP ===
