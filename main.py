@@ -86,12 +86,9 @@ def compute_atr(data, period=14):
     return atr[-1] if len(atr) > 0 else 0
 
 def compute_adx(data, period=14):
-    """Menghitung ADX sederhana untuk deteksi tren."""
     highs = data[:, 2]
     lows = data[:, 3]
     closes = data[:, 4]
-
-    # Hitung +DM dan -DM
     plus_dm = np.zeros(len(data) - 1)
     minus_dm = np.zeros(len(data) - 1)
     for i in range(1, len(data)):
@@ -99,22 +96,21 @@ def compute_adx(data, period=14):
         down_move = lows[i-1] - lows[i]
         plus_dm[i-1] = up_move if up_move > down_move and up_move > 0 else 0
         minus_dm[i-1] = down_move if down_move > up_move and down_move > 0 else 0
-
-    # Smooth +DM dan -DM
     atr = compute_atr(data, period)
     plus_di = np.zeros(len(data) - period)
     minus_di = np.zeros(len(data) - period)
     for i in range(period, len(data)):
         plus_di[i-period] = 100 * np.mean(plus_dm[i-period:i]) / atr if atr > 0 else 0
         minus_di[i-period] = 100 * np.mean(minus_dm[i-period:i]) / atr if atr > 0 else 0
-
-    # Hitung DX dan ADX
     dx = np.zeros(len(plus_di))
     for i in range(len(plus_di)):
         dx[i] = 100 * abs(plus_di[i] - minus_di[i]) / (plus_di[i] + minus_di[i]) if (plus_di[i] + minus_di[i]) > 0 else 0
     adx = np.mean(dx[-period:]) if len(dx) >= period else 0
-
     return adx, plus_di[-1], minus_di[-1]
+
+def compute_sma(closes, period=20):
+    """Hitung Simple Moving Average."""
+    return pd.Series(closes).rolling(window=period).mean().values
 
 def find_swing_high_lows(data):
     highs = data[:, 2]
@@ -129,18 +125,35 @@ def generate_chart(symbol, data, entry, tp, sl, rsi_last, adx_last):
         df["Time"] = pd.to_datetime(df["Time"], unit='ms')
         df.set_index("Time", inplace=True)
 
+        # Hitung indikator
+        sma = compute_sma(df["Close"].values, period=20)
+        rsi = compute_rsi(df["Close"].values, period=14)
+        rsi = np.pad(rsi, (len(df) - len(rsi), 0), 'constant', constant_values=np.nan)
+
+        # Siapkan panel tambahan
         apds = [
             mpf.make_addplot([entry]*len(df), color='green', linestyle='--', width=1),
             mpf.make_addplot([tp]*len(df), color='blue', linestyle='--', width=1),
             mpf.make_addplot([sl]*len(df), color='red', linestyle='--', width=1),
+            mpf.make_addplot(sma, color='orange', linestyle='-', width=1, ylabel='SMA 20'),
+            mpf.make_addplot(rsi, color='purple', panel=1, ylabel='RSI (14)'),
+            mpf.make_addplot([70]*len(df), color='red', linestyle='--', panel=1),
+            mpf.make_addplot([30]*len(df), color='green', linestyle='--', panel=1),
         ]
 
-        fig, axes = mpf.plot(df, type='candle', volume=True, addplot=apds, returnfig=True, style='yahoo', title=symbol)
-        axes[0].text(0.02, 0.95, f"RSI: {rsi_last:.2f}\nADX: {adx_last:.2f}", transform=axes[0].transAxes, fontsize=10, verticalalignment='top', bbox=dict(boxstyle="round", fc="w"))
-
+        # Buat chart
         chart_file = f"{symbol.replace('/', '_')}.png"
-        fig.savefig(chart_file)
-        plt.close(fig)
+        mpf.plot(
+            df,
+            type='candle',
+            volume=True,
+            style='yahoo',
+            title=f"{symbol} Signal",
+            addplot=apds,
+            panel_ratios=(1, 0.5),  # Dua panel: candlestick, RSI+volume
+            savefig=chart_file
+        )
+        print(f"Chart disimpan sebagai {chart_file}")
         return chart_file
     except Exception as e:
         send_telegram(f"⚠️ Gagal buat chart untuk {symbol}: {e}")
@@ -207,11 +220,11 @@ def detect_signal(symbol, data):
 
     elif trend == "sideways":
         resistance = max(highs[-20:])
-        breakout = last_close > resistance * 1.01  # Breakout signifikan
+        breakout = last_close > resistance * 1.01
         volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
         rsi_condition = 60 <= rsi[-1] <= 70
         candle_body = abs(last_close - last_open)
-        body_condition = candle_body > 0.5 * atr  # Candle bullish kuat
+        body_condition = candle_body > 0.5 * atr
 
         print(f"[DEBUG] Sideways - Breakout: {breakout}, Volume Spike: {volume_spike}, RSI Condition: {rsi_condition}, Body Condition: {body_condition}")
 
@@ -243,7 +256,6 @@ while True:
         symbols = [m['symbol'] for m in EXCHANGE.load_markets().values()
                    if m['quote'] == 'USDT' and m['spot'] and '/' in m['symbol']]
         
-        # Filter simbol berdasarkan volume
         liquid_symbols = []
         for symbol in symbols:
             try:
