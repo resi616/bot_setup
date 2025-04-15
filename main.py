@@ -11,12 +11,15 @@ import os
 # === CONFIGURATION ===
 TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
 CHAT_ID = '-1002643789070'
-EXCHANGE = ccxt.binance()
+EXCHANGE = ccxt.binance({
+    'enableRateLimit': True,
+    'defaultType': 'future'  # Set ke futures (USDⓈ-M perpetual)
+})
 TIMEFRAME = '15m'
 SWING_TIMEFRAME = '1h'
 CHECK_INTERVAL = 60 * 15  # 15 menit
 MIN_RR = 2.0  # Risk-Reward Ratio minimal 1:2
-MIN_VOLUME_24H = 100000  # Minimal volume 24h dalam USDT
+MIN_VOLUME_24H = 100000  # Minimal volume 24h dalam USDT (estimasi)
 
 sent_signals = set()
 
@@ -35,9 +38,10 @@ def send_telegram(msg, chart_path=None):
         print(f"Gagal kirim pesan: {e}")
 
 def get_ohlcv(symbol, timeframe, limit=100, retries=3):
+    """Ambil data OHLCV dari futures market."""
     for _ in range(retries):
         try:
-            data = EXCHANGE.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+            data = EXCHANGE.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit, params={'contractType': 'PERPETUAL'})
             return np.array(data)
         except:
             time.sleep(1)
@@ -109,7 +113,6 @@ def compute_adx(data, period=14):
     return adx, plus_di[-1], minus_di[-1]
 
 def compute_sma(closes, period=20):
-    """Hitung Simple Moving Average."""
     return pd.Series(closes).rolling(window=period).mean().values
 
 def find_swing_high_lows(data):
@@ -125,12 +128,10 @@ def generate_chart(symbol, data, entry, tp, sl, rsi_last, adx_last):
         df["Time"] = pd.to_datetime(df["Time"], unit='ms')
         df.set_index("Time", inplace=True)
 
-        # Hitung indikator
         sma = compute_sma(df["Close"].values, period=20)
         rsi = compute_rsi(df["Close"].values, period=14)
         rsi = np.pad(rsi, (len(df) - len(rsi), 0), 'constant', constant_values=np.nan)
 
-        # Siapkan panel tambahan
         apds = [
             mpf.make_addplot([entry]*len(df), color='green', linestyle='--', width=1),
             mpf.make_addplot([tp]*len(df), color='blue', linestyle='--', width=1),
@@ -141,16 +142,15 @@ def generate_chart(symbol, data, entry, tp, sl, rsi_last, adx_last):
             mpf.make_addplot([30]*len(df), color='green', linestyle='--', panel=1),
         ]
 
-        # Buat chart
         chart_file = f"{symbol.replace('/', '_')}.png"
         mpf.plot(
             df,
             type='candle',
             volume=True,
             style='yahoo',
-            title=f"{symbol} Signal",
+            title=f"{symbol} Futures Signal",
             addplot=apds,
-            panel_ratios=(1, 0.5),  # Dua panel: candlestick, RSI+volume
+            panel_ratios=(1, 0.5),
             savefig=chart_file
         )
         print(f"Chart disimpan sebagai {chart_file}")
@@ -212,7 +212,7 @@ def detect_signal(symbol, data):
             sent_signals.add(signal_key)
 
             msg = (
-                f"🟢 TREND STRATEGY: {symbol}\n"
+                f"🟢 TREND STRATEGY (FUTURES): {symbol}\n"
                 f"Entry: {last_close:.4f}\nTP: {tp:.4f}\nSL: {sl:.4f}\nRR: {(tp - last_close) / (last_close - sl):.2f}:1"
             )
             chart_path = generate_chart(symbol, data, last_close, tp, sl, rsi[-1], adx)
@@ -242,7 +242,7 @@ def detect_signal(symbol, data):
             sent_signals.add(signal_key)
 
             msg = (
-                f"🟡 SIDEWAYS STRATEGY: {symbol}\n"
+                f"🟡 SIDEWAYS STRATEGY (FUTURES): {symbol}\n"
                 f"Entry: {last_close:.4f}\nTP: {tp:.4f}\nSL: {sl:.4f}\nRR: {(tp - last_close) / (last_close - sl):.2f}:1"
             )
             chart_path = generate_chart(symbol, data, last_close, tp, sl, rsi[-1], adx)
@@ -251,17 +251,19 @@ def detect_signal(symbol, data):
 
 # === MAIN LOOP ===
 while True:
-    print(f"[{datetime.now()}] Scanning market...")
+    print(f"[{datetime.now()}] Scanning futures market...")
     try:
         symbols = [m['symbol'] for m in EXCHANGE.load_markets().values()
-                   if m['quote'] == 'USDT' and m['spot'] and '/' in m['symbol']]
+                   if m['quote'] == 'USDT' and m['swap'] and m['contract'] and '/' in m['symbol']]
         
         liquid_symbols = []
         for symbol in symbols:
             try:
-                ticker = EXCHANGE.fetch_ticker(symbol)
-                if ticker['quoteVolume'] > MIN_VOLUME_24H:
-                    liquid_symbols.append(symbol)
+                data = get_ohlcv(symbol, TIMEFRAME, limit=10)  # Ambil data singkat untuk estimasi volume
+                if data is not None:
+                    avg_volume = np.mean(data[:, 5] * data[:, 4])  # Volume * Close sebagai proxy quoteVolume
+                    if avg_volume * 96 > MIN_VOLUME_24H:  # Estimasi 24h (96 candle 15m)
+                        liquid_symbols.append(symbol)
             except:
                 continue
         symbols = liquid_symbols
