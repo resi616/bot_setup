@@ -91,7 +91,7 @@ def detect_trend(data):
     closes = data[:, 4]
     sma_fast = np.mean(closes[-10:])
     sma_slow = np.mean(closes[-30:])
-    
+
     if sma_fast > sma_slow * 1.01:
         return "uptrend"
     elif sma_fast < sma_slow * 0.99:
@@ -135,10 +135,14 @@ def detect_signal(symbol, data):
     if atr == 0:
         return None
 
+    print(f"\n[DEBUG] {symbol} - Trend: {trend}, RSI: {rsi[-1]:.2f}, ATR: {atr:.4f}")
+
     if trend == "uptrend":
         breakout = last_close > max(highs[-5:-1])
         volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
         rsi_condition = 60 <= rsi[-1] <= 75
+
+        print(f"[DEBUG] Uptrend - Breakout: {breakout}, Volume Spike: {volume_spike}, RSI Condition: {rsi_condition}")
 
         if breakout and volume_spike and rsi_condition:
             sl = min(swing_low, last_close - 1.5 * atr)
@@ -164,11 +168,13 @@ def detect_signal(symbol, data):
     elif trend == "sideways":
         resistance = max(highs[-20:])
         support = min(data[:, 3][-20:])
-        fakeout_check = last_close < resistance * 1.005 
+        fakeout_check = last_close < resistance * 1.005
 
         breakout = last_close > resistance
         volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
         rsi_condition = rsi[-1] < 75
+
+        print(f"[DEBUG] Sideways - Breakout: {breakout}, Volume Spike: {volume_spike}, RSI Condition: {rsi_condition}, Fakeout Check: {fakeout_check}")
 
         if breakout and volume_spike and rsi_condition and not fakeout_check:
             sl = min(support, last_close - 1.5 * atr)
