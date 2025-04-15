@@ -32,7 +32,7 @@ def get_ohlcv(symbol, timeframe, limit=100):
         return None
 
 def compute_rsi(closes, period=14):
-    """Perhitungan RSI yang lebih akurat."""
+    # """Perhitungan RSI yang lebih akurat."""
     deltas = np.diff(closes)
     gains = np.where(deltas > 0, deltas, 0)
     losses = np.where(deltas < 0, -deltas, 0)
@@ -61,7 +61,7 @@ def compute_rsi(closes, period=14):
     return rsi
 
 def compute_atr(data, period=14):
-    """Menghitung Average True Range (ATR)."""
+    # """Menghitung Average True Range (ATR)."""
     highs = data[:, 2]
     lows = data[:, 3]
     closes = data[:, 4]
@@ -81,7 +81,7 @@ def compute_atr(data, period=14):
     return atr[-1] if len(atr) > 0 else 0
 
 def find_swing_high_lows(data):
-    """Mencari swing high/low dari 20 candle terakhir."""
+    # """Mencari swing high/low dari 20 candle terakhir."""
     highs = data[:, 2]
     lows = data[:, 3]
     swing_high = max(highs[-20:])  # Diperpanjang ke 20 candle
