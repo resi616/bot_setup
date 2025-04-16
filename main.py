@@ -20,6 +20,7 @@ SWING_TIMEFRAME = '1h'
 CHECK_INTERVAL = 60 * 15  # 15 menit
 MIN_RR = 2.0  # Risk-Reward Ratio minimal 1:2
 MIN_VOLUME_24H = 100000  # Minimal volume 24h dalam USDT
+BTC_DROP_THRESHOLD = -0.02  # Blok long jika BTC turun > 2%
 
 sent_signals = set()
 
@@ -171,6 +172,18 @@ def detect_signal(symbol, data):
     rsi = compute_rsi(closes, period=14)
     trend = detect_trend(data)
     adx, _, _ = compute_adx(data)
+
+    # Filter Korelasi BTC untuk Long
+    if "BTC" not in symbol:  # Lewati untuk BTC/USDT:USDT
+        btc_data = get_ohlcv("BTC/USDT:USDT", TIMEFRAME, limit=10)
+        if btc_data is not None:
+            btc_change = (btc_data[-1, 4] - btc_data[0, 4]) / btc_data[0, 4]
+            if btc_change < BTC_DROP_THRESHOLD and trend in ["uptrend", "sideways"]:
+                print(f"[DEBUG] {symbol} - Long diblok karena BTC turun {btc_change:.2%}")
+                if trend == "downtrend":
+                    pass  # Lanjut ke short
+                else:
+                    return None
 
     swing_data = get_ohlcv(symbol, SWING_TIMEFRAME)
     if swing_data is None:
