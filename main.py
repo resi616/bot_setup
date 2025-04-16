@@ -13,13 +13,13 @@ TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
 CHAT_ID = '-1002643789070'
 EXCHANGE = ccxt.binance({
     'enableRateLimit': True,
-    'defaultType': 'future'  # Set ke futures (USDⓈ-M perpetual)
+    'defaultType': 'future'  # Futures (USDⓈ-M perpetual)
 })
 TIMEFRAME = '15m'
 SWING_TIMEFRAME = '1h'
 CHECK_INTERVAL = 60 * 15  # 15 menit
 MIN_RR = 2.0  # Risk-Reward Ratio minimal 1:2
-MIN_VOLUME_24H = 100000  # Minimal volume 24h dalam USDT (estimasi)
+MIN_VOLUME_24H = 100000  # Minimal volume 24h dalam USDT
 
 sent_signals = set()
 
@@ -33,12 +33,11 @@ def send_telegram(msg, chart_path=None):
             photo_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
             with open(chart_path, 'rb') as img:
                 requests.post(photo_url, files={"photo": img}, data={"chat_id": CHAT_ID})
-            os.remove(chart_path)  # Hapus chart setelah dikirim
+            os.remove(chart_path)
     except Exception as e:
         print(f"Gagal kirim pesan: {e}")
 
 def get_ohlcv(symbol, timeframe, limit=100, retries=3):
-    """Ambil data OHLCV dari futures market."""
     for _ in range(retries):
         try:
             data = EXCHANGE.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit, params={'contractType': 'PERPETUAL'})
@@ -51,17 +50,14 @@ def compute_rsi(closes, period=14):
     deltas = np.diff(closes)
     gains = np.where(deltas > 0, deltas, 0)
     losses = np.where(deltas < 0, -deltas, 0)
-
     avg_gain = np.mean(gains[:period]) if len(gains) >= period else 0
     avg_loss = np.mean(losses[:period]) if len(losses) >= period else 0
-
     rsi = []
     if avg_loss == 0:
         rsi.append(100 if avg_gain > 0 else 0)
     else:
         rs = avg_gain / avg_loss
         rsi.append(100 - (100 / (1 + rs)))
-
     for i in range(period, len(deltas)):
         avg_gain = (avg_gain * (period - 1) + gains[i]) / period
         avg_loss = (avg_loss * (period - 1) + losses[i]) / period
@@ -70,7 +66,6 @@ def compute_rsi(closes, period=14):
         else:
             rs = avg_gain / avg_loss
             rsi.append(100 - (100 / (1 + rs)))
-
     return rsi
 
 def compute_atr(data, period=14):
@@ -127,11 +122,9 @@ def generate_chart(symbol, data, entry, tp, sl, rsi_last, adx_last):
         df = pd.DataFrame(data, columns=["Time", "Open", "High", "Low", "Close", "Volume"])
         df["Time"] = pd.to_datetime(df["Time"], unit='ms')
         df.set_index("Time", inplace=True)
-
         sma = compute_sma(df["Close"].values, period=20)
         rsi = compute_rsi(df["Close"].values, period=14)
         rsi = np.pad(rsi, (len(df) - len(rsi), 0), 'constant', constant_values=np.nan)
-
         apds = [
             mpf.make_addplot([entry]*len(df), color='green', linestyle='--', width=1),
             mpf.make_addplot([tp]*len(df), color='blue', linestyle='--', width=1),
@@ -141,7 +134,6 @@ def generate_chart(symbol, data, entry, tp, sl, rsi_last, adx_last):
             mpf.make_addplot([70]*len(df), color='red', linestyle='--', panel=1),
             mpf.make_addplot([30]*len(df), color='green', linestyle='--', panel=1),
         ]
-
         chart_file = f"{symbol.replace('/', '_')}.png"
         mpf.plot(
             df,
@@ -190,12 +182,13 @@ def detect_signal(symbol, data):
 
     print(f"\n[DEBUG] {symbol} - Trend: {trend}, RSI: {rsi[-1]:.2f}, ADX: {adx:.2f}, ATR: {atr:.4f}")
 
+    # LONG: Uptrend
     if trend == "uptrend":
         breakout = last_close > max(highs[-5:-1])
         volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
         rsi_condition = 60 <= rsi[-1] <= 75
 
-        print(f"[DEBUG] Uptrend - Breakout: {breakout}, Volume Spike: {volume_spike}, RSI Condition: {rsi_condition}")
+        print(f"[DEBUG] Uptrend Long - Breakout: {breakout}, Volume Spike: {volume_spike}, RSI Condition: {rsi_condition}")
 
         if breakout and volume_spike and rsi_condition:
             sl = min(swing_low, last_close - 1.5 * atr)
@@ -206,18 +199,19 @@ def detect_signal(symbol, data):
             if risk <= 0 or (tp - last_close) / risk < MIN_RR:
                 return None
 
-            signal_key = f"{symbol}-{last_close:.4f}-{tp:.4f}-{sl:.4f}"
+            signal_key = f"{symbol}-long-{last_close:.4f}-{tp:.4f}-{sl:.4f}"
             if signal_key in sent_signals:
                 return None
             sent_signals.add(signal_key)
 
             msg = (
-                f"🟢 TREND STRATEGY (FUTURES): {symbol}\n"
+                f"🟢 TREND STRATEGY (LONG): {symbol}\n"
                 f"Entry: {last_close:.4f}\nTP: {tp:.4f}\nSL: {sl:.4f}\nRR: {(tp - last_close) / (last_close - sl):.2f}:1"
             )
             chart_path = generate_chart(symbol, data, last_close, tp, sl, rsi[-1], adx)
             return msg, chart_path
 
+    # LONG: Sideways
     elif trend == "sideways":
         resistance = max(highs[-20:])
         breakout = last_close > resistance * 1.01
@@ -226,7 +220,7 @@ def detect_signal(symbol, data):
         candle_body = abs(last_close - last_open)
         body_condition = candle_body > 0.5 * atr
 
-        print(f"[DEBUG] Sideways - Breakout: {breakout}, Volume Spike: {volume_spike}, RSI Condition: {rsi_condition}, Body Condition: {body_condition}")
+        print(f"[DEBUG] Sideways Long - Breakout: {breakout}, Volume Spike: {volume_spike}, RSI Condition: {rsi_condition}, Body Condition: {body_condition}")
 
         if breakout and volume_spike and rsi_condition and body_condition:
             sl = min(swing_low, last_close - 1.5 * atr)
@@ -236,17 +230,78 @@ def detect_signal(symbol, data):
             if risk <= 0 or (tp - last_close) / risk < MIN_RR:
                 return None
 
-            signal_key = f"{symbol}-{last_close:.4f}-{tp:.4f}-{sl:.4f}"
+            signal_key = f"{symbol}-long-{last_close:.4f}-{tp:.4f}-{sl:.4f}"
             if signal_key in sent_signals:
                 return None
             sent_signals.add(signal_key)
 
             msg = (
-                f"🟡 SIDEWAYS STRATEGY (FUTURES): {symbol}\n"
+                f"🟡 SIDEWAYS STRATEGY (LONG): {symbol}\n"
                 f"Entry: {last_close:.4f}\nTP: {tp:.4f}\nSL: {sl:.4f}\nRR: {(tp - last_close) / (last_close - sl):.2f}:1"
             )
             chart_path = generate_chart(symbol, data, last_close, tp, sl, rsi[-1], adx)
             return msg, chart_path
+
+    # SHORT: Downtrend
+    elif trend == "downtrend":
+        breakout = last_close < min(lows[-5:-1])
+        volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
+        rsi_condition = 25 <= rsi[-1] <= 40
+
+        print(f"[DEBUG] Downtrend Short - Breakout: {breakout}, Volume Spike: {volume_spike}, RSI Condition: {rsi_condition}")
+
+        if breakout and volume_spike and rsi_condition:
+            sl = max(swing_high, last_close + 1.5 * atr)
+            risk = sl - last_close
+            tp = last_close - (risk * MIN_RR)
+            tp = max(tp, swing_low * 0.95)
+
+            if risk <= 0 or (last_close - tp) / risk < MIN_RR:
+                return None
+
+            signal_key = f"{symbol}-short-{last_close:.4f}-{tp:.4f}-{sl:.4f}"
+            if signal_key in sent_signals:
+                return None
+            sent_signals.add(signal_key)
+
+            msg = (
+                f"🔴 TREND STRATEGY (SHORT): {symbol}\n"
+                f"Entry: {last_close:.4f}\nTP: {tp:.4f}\nSL: {sl:.4f}\nRR: {(last_close - tp) / (sl - last_close):.2f}:1"
+            )
+            chart_path = generate_chart(symbol, data, last_close, tp, sl, rsi[-1], adx)
+            return msg, chart_path
+
+    # SHORT: Sideways
+    elif trend == "sideways":
+        support = min(lows[-20:])
+        breakout = last_close < support * 0.99
+        volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
+        rsi_condition = 30 <= rsi[-1] <= 40
+        candle_body = abs(last_open - last_close)
+        body_condition = candle_body > 0.5 * atr
+
+        print(f"[DEBUG] Sideways Short - Breakout: {breakout}, Volume Spike: {volume_spike}, RSI Condition: {rsi_condition}, Body Condition: {body_condition}")
+
+        if breakout and volume_spike and rsi_condition and body_condition:
+            sl = max(swing_high, last_close + 1.5 * atr)
+            risk = sl - last_close
+            tp = last_close - (risk * MIN_RR)
+
+            if risk <= 0 or (last_close - tp) / risk < MIN_RR:
+                return None
+
+            signal_key = f"{symbol}-short-{last_close:.4f}-{tp:.4f}-{sl:.4f}"
+            if signal_key in sent_signals:
+                return None
+            sent_signals.add(signal_key)
+
+            msg = (
+                f"🟡 SIDEWAYS STRATEGY (SHORT): {symbol}\n"
+                f"Entry: {last_close:.4f}\nTP: {tp:.4f}\nSL: {sl:.4f}\nRR: {(last_close - tp) / (sl - last_close):.2f}:1"
+            )
+            chart_path = generate_chart(symbol, data, last_close, tp, sl, rsi[-1], adx)
+            return msg, chart_path
+
     return None
 
 # === MAIN LOOP ===
@@ -259,10 +314,10 @@ while True:
         liquid_symbols = []
         for symbol in symbols:
             try:
-                data = get_ohlcv(symbol, TIMEFRAME, limit=10)  # Ambil data singkat untuk estimasi volume
+                data = get_ohlcv(symbol, TIMEFRAME, limit=10)
                 if data is not None:
-                    avg_volume = np.mean(data[:, 5] * data[:, 4])  # Volume * Close sebagai proxy quoteVolume
-                    if avg_volume * 96 > MIN_VOLUME_24H:  # Estimasi 24h (96 candle 15m)
+                    avg_volume = np.mean(data[:, 5] * data[:, 4])
+                    if avg_volume * 96 > MIN_VOLUME_24H:
                         liquid_symbols.append(symbol)
             except:
                 continue
