@@ -337,7 +337,8 @@ while True:
         symbols = liquid_symbols
 
         for symbol in symbols:
-            data = get_ohlcv(symbol, TIMEFRAME)
+            data = get_ohlcv(symbol, TIMEFRAME, limit=100)
+
             if data is not None:
                 result = detect_signal(symbol, data)
                 if result:
