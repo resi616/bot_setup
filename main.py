@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 import os
 
 # === CONFIGURATION ===
-TELEGRAM_TOKEN = '7723680969:AAERGAlUjOpKgzCpHihut2SYFALCHZ50h1M'
-CHAT_ID = '-1002643789070'
+TELEGRAM_TOKEN = '8152840476:AAF36dWX4wIm8a6m2s_3ZOr1kLkRROVrv6c'
+CHAT_ID = '-1002520925418'
 EXCHANGE = ccxt.binance({
     'enableRateLimit': True,
     'defaultType': 'future'  # Futures (USDⓈ-M perpetual)
@@ -318,51 +318,37 @@ def detect_signal(symbol, data):
     return None
 
 # === MAIN LOOP ===
-# === MAIN LOOP ===
 while True:
     print(f"[{datetime.now()}] Scanning futures market...")
     try:
-        markets = EXCHANGE.load_markets()
-        symbols = [m['symbol'] for m in markets.values()
-                   if m.get('quote') == 'USDT' and m.get('swap') and m.get('contract') and '/' in m['symbol']]
+        symbols = [m['symbol'] for m in EXCHANGE.load_markets().values()
+                   if m['quote'] == 'USDT' and m['swap'] and m['contract'] and '/' in m['symbol']]
         
         liquid_symbols = []
         for symbol in symbols:
             try:
-                data = get_ohlcv(symbol, TIMEFRAME, limit=100)  # Ambil minimal 100 data candle
-                if data is None or data.shape[0] < 50 or data.shape[1] != 6:
-                    print(f"[{symbol}] ❌ Data tidak valid (None/kosong/bentuk tidak sesuai)")
-                    continue
-
-                avg_volume = np.mean(data[:, 5] * data[:, 4])  # volume x close
-                if avg_volume * 96 > MIN_VOLUME_24H:
-                    liquid_symbols.append(symbol)
-            except Exception as e:
-                print(f"[{symbol}] Error saat cek volume: {e}")
+                data = get_ohlcv(symbol, TIMEFRAME, limit=10)
+                if data is not None:
+                    avg_volume = np.mean(data[:, 5] * data[:, 4])
+                    if avg_volume * 96 > MIN_VOLUME_24H:
+                        liquid_symbols.append(symbol)
+            except:
                 continue
+        symbols = liquid_symbols
 
-        print(f"✅ Total simbol liquid: {len(liquid_symbols)}\n")
-
-        for symbol in liquid_symbols:
-            try:
-                data = get_ohlcv(symbol, TIMEFRAME, limit=150)
-                if data is None or data.shape[0] < 50 or data.shape[1] != 6:
-                    print(f"[{symbol}] ❌ Data tidak valid saat deteksi sinyal")
-                    continue
-
+        for symbol in symbols:
+            data = get_ohlcv(symbol, TIMEFRAME)
+            if data is not None:
                 result = detect_signal(symbol, data)
                 if result:
                     msg, chart = result
-                    print(f"[{datetime.now()}] 🚨 {symbol} SIGNAL!")
+                    print(f"[{datetime.now()}] {symbol} SIGNAL!")
                     send_telegram(msg, chart)
-            except Exception as e:
-                print(f"[{symbol}] Error saat deteksi sinyal: {e}")
-                continue
 
-        print(f"[{datetime.now()}] ✅ Selesai scanning, tunggu {CHECK_INTERVAL / 60} menit...\n")
+        print(f"[{datetime.now()}] Selesai scanning, tunggu {CHECK_INTERVAL / 60} menit...\n")
         time.sleep(CHECK_INTERVAL)
 
     except Exception as e:
-        print(f"🔥 ERROR UTAMA: {e}")
+        print(f"ERROR: {e}")
         send_telegram(f"\u274c Error saat scan: {e}")
         time.sleep(60)
