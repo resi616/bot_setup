@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import os
 
 # === CONFIGURATION ===
-TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
+TELEGRAM_TOKEN = '7723680969:AAERGAlUjOpKgzCpHihut2SYFALCHZ50h1M'
 CHAT_ID = '-1002643789070'
 EXCHANGE = ccxt.binance({
     'enableRateLimit': True,
