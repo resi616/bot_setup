@@ -16,7 +16,7 @@ from prometheus_client import start_http_server, Counter, Gauge, Histogram
 # Configuration
 TELEGRAM_TOKEN = '7881384249:AAFLRCsETKh6Mr4Dh0s3KdSjrDdNdwNn2G4'
 CHAT_ID = '-1002520925418'
-EXCHANGE = ccxt.binance({'enableRateLimit': True})
+EXCHANGE = ccxt.binance
 TIMEFRAME = '15m'
 CHECK_INTERVAL = 60 * 15
 MIN_VOLUME_24H = 100000
