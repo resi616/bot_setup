@@ -16,7 +16,7 @@ from prometheus_client import start_http_server, Counter, Gauge, Histogram
 # Configuration
 TELEGRAM_TOKEN = '7881384249:AAFLRCsETKh6Mr4Dh0s3KdSjrDdNdwNn2G4'
 CHAT_ID = '-1002520925418'
-EXCHANGE = ccxt.binance
+EXCHANGE = ccxt.binance()  # Removed enableRateLimit=True
 TIMEFRAME = '15m'
 CHECK_INTERVAL = 60 * 15
 MIN_VOLUME_24H = 100000
@@ -49,7 +49,7 @@ def send_telegram(msg, chart_path=None):
 def refresh_exchange():
     global EXCHANGE
     try:
-        EXCHANGE = ccxt.binance({'enableRateLimit': True})
+        EXCHANGE = ccxt.binance()  # Removed enableRateLimit=True
         logging.info("Binance connection refreshed")
     except Exception as e:
         errors_total.labels(type='exchange_refresh').inc()
@@ -59,10 +59,6 @@ def get_ohlcv(symbol, timeframe='15m', limit=100):
     for attempt in range(3):
         try:
             return np.array(EXCHANGE.fetch_ohlcv(symbol, timeframe, limit=limit))
-        except ccxt.RateLimitExceeded:
-            errors_total.labels(type='ratelimit').inc()
-            logging.warning(f"Rate limit exceeded for {symbol}, retrying in 60s...")
-            time.sleep(60)
         except Exception as e:
             errors_total.labels(type='ohlcv').inc()
             logging.error(f"Error fetching OHLCV for {symbol}: {e}")
@@ -121,7 +117,7 @@ def get_symbols():
                 ticker = EXCHANGE.fetch_ticker(s)
                 if ticker['quoteVolume'] > MIN_VOLUME_24H:
                     symbols.append(s)
-                time.sleep(0.1)
+                time.sleep(0.1)  # Keep small delay to reduce risk of hitting API limits
             except Exception as e:
                 errors_total.labels(type='ticker').inc()
                 logging.warning(f"Error fetching ticker for {s}: {e}")
