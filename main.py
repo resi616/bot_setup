@@ -18,12 +18,12 @@ TELEGRAM_TOKEN = '7881384249:AAFLRCsETKh6Mr4Dh0s3KdSjrDdNdwNn2G4'
 CHAT_ID = '-1002520925418'
 EXCHANGE = ccxt.binance({'enableRateLimit': True})
 TIMEFRAME = '15m'
-CHECK_INTERVAL = 60 * 15  # 15 minutes
+CHECK_INTERVAL = 60 * 15
 MIN_VOLUME_24H = 100000
 EMA_PERIOD = 50
 SYMBOL_LIMIT = 50
-SENT_SIGNALS_MAX_AGE = 24 * 60 * 60  # Clear signals older than 24 hours
-sent_signals = {}  # Changed to dict to store timestamp
+SENT_SIGNALS_MAX_AGE = 24 * 60 * 60
+sent_signals = {}
 
 # Logging
 logging.basicConfig(filename='trading_bot.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -162,10 +162,19 @@ def scan():
                     k, d = compute_stoch_rsi(closes)
                     ema = compute_ema(closes, EMA_PERIOD)
                     if k is None or d is None or ema is None:
+                        logging.info(f"[SCREEN] {symbol} - Trend: N/A, K: N/A, D: N/A, Price: N/A, Signal: False (Indicator calculation failed)")
                         continue
 
-                    if is_cross_up(k, d, closes[-1], ema):
-                        price = closes[-1]
+                    price = closes[-1]
+                    trend = "bullish" if price > ema[-1] else "bearish"
+                    signal = is_cross_up(k, d, price, ema)
+
+                    # Log screening information for each coin
+                    logging.info(
+                        f"[SCREEN] {symbol} - Trend: {trend}, K: {k[-1]:.2f}, D: {d[-1]:.2f}, Price: {price:.4f}, Signal: {signal}"
+                    )
+
+                    if signal:
                         time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
                         signal_key = f"{symbol}-{time_str}-{price:.2f}"
                         if signal_key in sent_signals:
