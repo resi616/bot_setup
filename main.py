@@ -11,12 +11,11 @@ import os
 import logging
 import tempfile
 import signal
-from prometheus_client import start_http_server, Counter, Gauge, Histogram
 
 # Configuration
 TELEGRAM_TOKEN = '7881384249:AAFLRCsETKh6Mr4Dh0s3KdSjrDdNdwNn2G4'
 CHAT_ID = '-1002520925418'
-EXCHANGE = ccxt.binance()  # Removed enableRateLimit=True
+EXCHANGE = ccxt.binance()
 TIMEFRAME = '15m'
 CHECK_INTERVAL = 60 * 15
 MIN_VOLUME_24H = 100000
@@ -28,12 +27,6 @@ sent_signals = {}
 # Logging
 logging.basicConfig(filename='trading_bot.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Prometheus metrics
-signals_total = Counter('trading_signals_total', 'Total trading signals generated', ['symbol'])
-errors_total = Counter('trading_errors_total', 'Total errors encountered', ['type'])
-scan_duration = Histogram('trading_scan_duration_seconds', 'Time taken for each scan')
-symbols_processed = Gauge('trading_symbols_processed', 'Number of symbols processed per scan')
-
 def send_telegram(msg, chart_path=None):
     try:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg}, timeout=10)
@@ -43,16 +36,14 @@ def send_telegram(msg, chart_path=None):
             os.remove(chart_path)
         logging.info(f"Telegram message sent: {msg}")
     except Exception as e:
-        errors_total.labels(type='telegram').inc()
         logging.error(f"Failed to send Telegram message: {e}")
 
 def refresh_exchange():
     global EXCHANGE
     try:
-        EXCHANGE = ccxt.binance()  # Removed enableRateLimit=True
+        EXCHANGE = ccxt.binance()
         logging.info("Binance connection refreshed")
     except Exception as e:
-        errors_total.labels(type='exchange_refresh').inc()
         logging.error(f"Failed to refresh Binance connection: {e}")
 
 def get_ohlcv(symbol, timeframe='15m', limit=100):
@@ -60,7 +51,6 @@ def get_ohlcv(symbol, timeframe='15m', limit=100):
         try:
             return np.array(EXCHANGE.fetch_ohlcv(symbol, timeframe, limit=limit))
         except Exception as e:
-            errors_total.labels(type='ohlcv').inc()
             logging.error(f"Error fetching OHLCV for {symbol}: {e}")
             time.sleep(1)
     return None
@@ -74,7 +64,6 @@ def compute_stoch_rsi(closes, rsi_period=14, stoch_period=14, smooth_k=3, smooth
             stoch[f'STOCHRSId_{rsi_period}_{rsi_period}_{smooth_d}'].values
         )
     except Exception as e:
-        errors_total.labels(type='stochrsi').inc()
         logging.error(f"Error computing Stochastic RSI: {e}")
         return None, None
 
@@ -82,7 +71,6 @@ def compute_ema(closes, period=50):
     try:
         return pd.Series(closes).ewm(span=period, adjust=False).mean().values
     except Exception as e:
-        errors_total.labels(type='ema').inc()
         logging.error(f"Error computing EMA: {e}")
         return None
 
@@ -104,7 +92,6 @@ def generate_chart(symbol, data):
         logging.info(f"Chart generated for {symbol}: {chart_file}")
         return chart_file
     except Exception as e:
-        errors_total.labels(type='chart').inc()
         logging.error(f"Error generating chart for {symbol}: {e}")
         return None
 
@@ -117,14 +104,12 @@ def get_symbols():
                 ticker = EXCHANGE.fetch_ticker(s)
                 if ticker['quoteVolume'] > MIN_VOLUME_24H:
                     symbols.append(s)
-                time.sleep(0.1)  # Keep small delay to reduce risk of hitting API limits
+                time.sleep(0.1)
             except Exception as e:
-                errors_total.labels(type='ticker').inc()
                 logging.warning(f"Error fetching ticker for {s}: {e}")
         symbols = sorted(symbols, key=lambda x: EXCHANGE.fetch_ticker(x)['quoteVolume'], reverse=True)
         return symbols[:SYMBOL_LIMIT]
     except Exception as e:
-        errors_total.labels(type='symbols').inc()
         logging.error(f"Error fetching symbols: {e}")
         return []
 
@@ -136,68 +121,63 @@ def clean_sent_signals():
     logging.info(f"Cleaned {len(expired)} expired signals")
 
 def scan():
-    with scan_duration.time():
-        logging.info(f"Starting scan at {datetime.now()}")
-        try:
-            clean_sent_signals()
-            refresh_exchange()
-            symbols = get_symbols()
-            if not symbols:
-                logging.warning("No symbols found, retrying in next scan")
-                return
+    logging.info(f"Starting scan at {datetime.now()}")
+    try:
+        clean_sent_signals()
+        refresh_exchange()
+        symbols = get_symbols()
+        if not symbols:
+            logging.warning("No symbols found, retrying in next scan")
+            return
 
-            symbols_processed.set(len(symbols))
-            for symbol in symbols:
-                try:
-                    data = get_ohlcv(symbol, TIMEFRAME, limit=100)
-                    if data is None or len(data) < 50:
-                        logging.warning(f"Insufficient data for {symbol}")
-                        continue
-
-                    closes = data[:, 4]
-                    k, d = compute_stoch_rsi(closes)
-                    ema = compute_ema(closes, EMA_PERIOD)
-                    if k is None or d is None or ema is None:
-                        logging.info(f"[SCREEN] {symbol} - Trend: N/A, K: N/A, D: N/A, Price: N/A, Signal: False (Indicator calculation failed)")
-                        continue
-
-                    price = closes[-1]
-                    trend = "bullish" if price > ema[-1] else "bearish"
-                    signal = is_cross_up(k, d, price, ema)
-
-                    # Log screening information for each coin
-                    logging.info(
-                        f"[SCREEN] {symbol} - Trend: {trend}, K: {k[-1]:.2f}, D: {d[-1]:.2f}, Price: {price:.4f}, Signal: {signal}"
-                    )
-
-                    if signal:
-                        time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                        signal_key = f"{symbol}-{time_str}-{price:.2f}"
-                        if signal_key in sent_signals:
-                            continue
-                        sent_signals[signal_key] = time.time()
-
-                        signals_total.labels(symbol=symbol).inc()
-                        msg = (
-                            f"⚡ STOCH RSI CROSSING ({symbol})\n"
-                            f"Cross at oversold (K={k[-1]:.2f}, D={d[-1]:.2f})\n"
-                            f"Price: {price:.4f} (Above EMA{EMA_PERIOD})\n"
-                            f"Time: {time_str}"
-                        )
-                        chart = generate_chart(symbol, data)
-                        send_telegram(msg, chart)
-                        logging.info(f"SIGNAL! {symbol} at {price:.4f}")
-
-                except Exception as e:
-                    errors_total.labels(type='symbol_processing').inc()
-                    logging.error(f"Error processing {symbol}: {e}")
+        for symbol in symbols:
+            try:
+                data = get_ohlcv(symbol, TIMEFRAME, limit=100)
+                if data is None or len(data) < 50:
+                    logging.warning(f"Insufficient data for {symbol}")
                     continue
 
-            logging.info(f"Scan completed, waiting {CHECK_INTERVAL/60} minutes...")
-        except Exception as e:
-            errors_total.labels(type='scan').inc()
-            logging.error(f"Critical error in scan: {e}")
-            send_telegram(f"⚠️ CRITICAL ERROR: {e}")
+                closes = data[:, 4]
+                k, d = compute_stoch_rsi(closes)
+                ema = compute_ema(closes, EMA_PERIOD)
+                if k is None or d is None or ema is None:
+                    logging.info(f"[SCREEN] {symbol} - Trend: N/A, K: N/A, D: N/A, Price: N/A, Signal: False (Indicator calculation failed)")
+                    continue
+
+                price = closes[-1]
+                trend = "bullish" if price > ema[-1] else "bearish"
+                signal = is_cross_up(k, d, price, ema)
+
+                # Log screening information for each coin
+                logging.info(
+                    f"[SCREEN] {symbol} - Trend: {trend}, K: {k[-1]:.2f}, D: {d[-1]:.2f}, Price: {price:.4f}, Signal: {signal}"
+                )
+
+                if signal:
+                    time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    signal_key = f"{symbol}-{time_str}-{price:.2f}"
+                    if signal_key in sent_signals:
+                        continue
+                    sent_signals[signal_key] = time.time()
+
+                    msg = (
+                        f"⚡ STOCH RSI CROSSING ({symbol})\n"
+                        f"Cross at oversold (K={k[-1]:.2f}, D={d[-1]:.2f})\n"
+                        f"Price: {price:.4f} (Above EMA{EMA_PERIOD})\n"
+                        f"Time: {time_str}"
+                    )
+                    chart = generate_chart(symbol, data)
+                    send_telegram(msg, chart)
+                    logging.info(f"SIGNAL! {symbol} at {price:.4f}")
+
+            except Exception as e:
+                logging.error(f"Error processing {symbol}: {e}")
+                continue
+
+        logging.info(f"Scan completed, waiting {CHECK_INTERVAL/60} minutes...")
+    except Exception as e:
+        logging.error(f"Critical error in scan: {e}")
+        send_telegram(f"⚠️ CRITICAL ERROR: {e}")
 
 def run_loop():
     next_run = datetime.now().replace(second=0, microsecond=0)
@@ -214,7 +194,6 @@ def signal_handler(sig, frame):
     exit(0)
 
 if __name__ == "__main__":
-    start_http_server(8000)
     logging.info("Starting trading bot...")
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
