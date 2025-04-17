@@ -3,198 +3,204 @@ import time
 import requests
 import numpy as np
 import pandas as pd
-import pandas_ta as ta
-import matplotlib.pyplot as plt
+from datetime import datetime
 import mplfinance as mpf
-from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
 import os
-import logging
-import tempfile
-import signal
 
-# Configuration
-TELEGRAM_TOKEN = '7881384249:AAFLRCsETKh6Mr4Dh0s3KdSjrDdNdwNn2G4'
-CHAT_ID = '-1002520925418'
-EXCHANGE = ccxt.binance()
-TIMEFRAME = '15m'
-CHECK_INTERVAL = 60 * 15
-MIN_VOLUME_24H = 100000
-EMA_PERIOD = 50
-SYMBOL_LIMIT = 50
-SENT_SIGNALS_MAX_AGE = 24 * 60 * 60
-sent_signals = {}
+# === CONFIGURATION ===
+TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
+CHAT_ID = '-1002643789070'
+EXCHANGE = ccxt.binance({
+    'enableRateLimit': True,
+    'defaultType': 'future'
+})
+TIMEFRAME = '5m'  # Timeframe: 5 menit
+CHECK_INTERVAL = 60 * 15  # 15 menit
+MIN_RR = 1.5  # Risk-Reward Ratio 1.5:1
+MIN_CANDLES = 10  # Minimal candle untuk atasi data pendek
 
-# Logging
-logging.basicConfig(filename='trading_bot.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+sent_signals = set()
 
+# === TOOLS ===
 def send_telegram(msg, chart_path=None):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": msg}
     try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg}, timeout=10)
+        requests.post(url, json=payload)
         if chart_path:
+            photo_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
             with open(chart_path, 'rb') as img:
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto", files={"photo": img}, data={"chat_id": CHAT_ID}, timeout=10)
+                requests.post(photo_url, files={"photo": img}, data={"chat_id": CHAT_ID})
             os.remove(chart_path)
-        logging.info(f"Telegram message sent: {msg}")
     except Exception as e:
-        logging.error(f"Failed to send Telegram message: {e}")
+        print(f"Gagal kirim pesan: {e}")
 
-def refresh_exchange():
-    global EXCHANGE
-    try:
-        EXCHANGE = ccxt.binance()
-        logging.info("Binance connection refreshed")
-    except Exception as e:
-        logging.error(f"Failed to refresh Binance connection: {e}")
-
-def get_ohlcv(symbol, timeframe='15m', limit=100):
-    for attempt in range(3):
+def get_ohlcv(symbol, timeframe, limit=100, retries=5):
+    for attempt in range(retries):
         try:
-            return np.array(EXCHANGE.fetch_ohlcv(symbol, timeframe, limit=limit))
+            since = int((time.time() - (limit * 5 * 60)) * 1000)  # 500 menit ke belakang
+            data = EXCHANGE.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit, since=since, params={'contractType': 'PERPETUAL'})
+            data = np.array(data)
+            if len(data) == 0:
+                print(f"[ERROR] {symbol} - Tidak ada data yang dikembalikan")
+                return None
+            if len(data) < MIN_CANDLES:
+                print(f"[WARNING] {symbol} - Data terlalu pendek: {len(data)} candles, minimal {MIN_CANDLES}")
+                return None
+            print(f"[INFO] {symbol} - Berhasil mengambil {len(data)} candles")
+            return data
         except Exception as e:
-            logging.error(f"Error fetching OHLCV for {symbol}: {e}")
-            time.sleep(1)
+            print(f"[ERROR] Gagal ambil data {symbol}, attempt {attempt + 1}/{retries}: {e}")
+            time.sleep(3)
     return None
 
-def compute_stoch_rsi(closes, rsi_period=14, stoch_period=14, smooth_k=3, smooth_d=3):
-    try:
-        df = pd.Series(closes).to_frame(name='close')
-        stoch = ta.stochrsi(df['close'], length=rsi_period, rsi_length=rsi_period, k=smooth_k, d=smooth_d)
-        return (
-            stoch[f'STOCHRSIk_{rsi_period}_{rsi_period}_{smooth_k}'].values,
-            stoch[f'STOCHRSId_{rsi_period}_{rsi_period}_{smooth_d}'].values
+def compute_stoch(highs, lows, closes, k_period=5, d_period=3, smooth_k=3):
+    if len(closes) < k_period + d_period + smooth_k:
+        return [], [], []
+    
+    k_values = []
+    for i in range(k_period - 1, len(closes)):
+        lowest_low = np.min(lows[i - (k_period - 1):i + 1])
+        highest_high = np.max(highs[i - (k_period - 1):i + 1])
+        if highest_high == lowest_low:
+            k = 0
+        else:
+            k = (closes[i] - lowest_low) / (highest_high - lowest_low) * 100
+        k_values.append(k)
+    
+    d_values = pd.Series(k_values).rolling(window=d_period).mean().values
+    slow_d_values = pd.Series(d_values).rolling(window=smooth_k).mean().values
+    
+    return k_values, d_values, slow_d_values
+
+def compute_atr(data, period=14):
+    if len(data) < period + 1:
+        return 0
+    highs = data[:, 2]
+    lows = data[:, 3]
+    closes = data[:, 4]
+    tr = np.zeros(len(data) - 1)
+    for i in range(1, len(data)):
+        tr[i-1] = max(
+            highs[i] - lows[i],
+            abs(highs[i] - closes[i-1]),
+            abs(lows[i] - closes[i-1])
         )
-    except Exception as e:
-        logging.error(f"Error computing Stochastic RSI: {e}")
-        return None, None
+    atr = np.zeros(len(tr) - period + 1)
+    for i in range(period, len(tr) + 1):
+        atr[i-period] = np.mean(tr[i-period:i])
+    return atr[-1] if len(atr) > 0 else 0
 
-def compute_ema(closes, period=50):
+def generate_chart(symbol, data, entry, tp, sl, stoch_k, stoch_d):
     try:
-        return pd.Series(closes).ewm(span=period, adjust=False).mean().values
-    except Exception as e:
-        logging.error(f"Error computing EMA: {e}")
-        return None
-
-def is_cross_up(k, d, price, ema, threshold=20):
-    if any(np.isnan([k[-2], k[-1], d[-2], d[-1]])) or ema is None:
-        return False
-    return k[-2] < d[-2] and k[-1] > d[-1] and k[-1] < threshold and price > ema[-1]
-
-def generate_chart(symbol, data):
-    try:
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-            chart_file = tmp.name
         df = pd.DataFrame(data, columns=["Time", "Open", "High", "Low", "Close", "Volume"])
         df["Time"] = pd.to_datetime(df["Time"], unit='ms')
         df.set_index("Time", inplace=True)
-        fig, axlist = mpf.plot(df, type='candle', style='charles', volume=True, title=f"{symbol} ({TIMEFRAME})", returnfig=True)
-        fig.savefig(chart_file)
-        plt.close(fig)
-        logging.info(f"Chart generated for {symbol}: {chart_file}")
+        stoch_k = np.pad(stoch_k, (len(df) - len(stoch_k), 0), 'constant', constant_values=np.nan)
+        stoch_d = np.pad(stoch_d, (len(df) - len(stoch_d), 0), 'constant', constant_values=np.nan)
+        apds = [
+            mpf.make_addplot([entry]*len(df), color='green', linestyle='--', width=1),
+            mpf.make_addplot([tp]*len(df), color='blue', linestyle='--', width=1),
+            mpf.make_addplot([sl]*len(df), color='red', linestyle='--', width=1),
+            mpf.make_addplot(stoch_k, color='blue', panel=1, ylabel='Stochastic (5,3,3)'),
+            mpf.make_addplot(stoch_d, color='red', panel=1),
+            mpf.make_addplot([80]*len(df), color='red', linestyle='--', panel=1),
+            mpf.make_addplot([20]*len(df), color='green', linestyle='--', panel=1),
+        ]
+        chart_file = f"{symbol.replace('/', '_')}_futures_pump.png"
+        mpf.plot(
+            df,
+            type='candle',
+            volume=True,
+            style='yahoo',
+            title=f"{symbol} Futures Pump Signal",
+            addplot=apds,
+            panel_ratios=(1, 0.5),
+            savefig=chart_file
+        )
+        print(f"Chart disimpan sebagai {chart_file}")
         return chart_file
     except Exception as e:
-        logging.error(f"Error generating chart for {symbol}: {e}")
+        send_telegram(f"⚠️ Gagal buat chart untuk {symbol}: {e}")
         return None
 
-def get_symbols():
-    try:
-        all_symbols = [m['symbol'] for m in EXCHANGE.load_markets().values() if m['quote'] == 'USDT' and m['spot'] and '/' in m['symbol']]
-        symbols = []
-        for s in all_symbols:
-            try:
-                ticker = EXCHANGE.fetch_ticker(s)
-                if ticker['quoteVolume'] > MIN_VOLUME_24H:
-                    symbols.append(s)
-                time.sleep(0.1)
-            except Exception as e:
-                logging.warning(f"Error fetching ticker for {s}: {e}")
-        symbols = sorted(symbols, key=lambda x: EXCHANGE.fetch_ticker(x)['quoteVolume'], reverse=True)
-        return symbols[:SYMBOL_LIMIT]
-    except Exception as e:
-        logging.error(f"Error fetching symbols: {e}")
-        return []
+def detect_pump(symbol, data):
+    if len(data) < MIN_CANDLES:
+        print(f"[WARNING] {symbol} - Data tidak cukup untuk analisis: {len(data)} candles")
+        return None
 
-def clean_sent_signals():
-    current_time = time.time()
-    expired = [key for key, timestamp in sent_signals.items() if current_time - timestamp > SENT_SIGNALS_MAX_AGE]
-    for key in expired:
-        del sent_signals[key]
-    logging.info(f"Cleaned {len(expired)} expired signals")
+    closes = data[:, 4]
+    highs = data[:, 2]
+    lows = data[:, 3]
+    volumes = data[:, 5]
 
-def scan():
-    logging.info(f"Starting scan at {datetime.now()}")
+    last_close = closes[-1]
+    prev_high = highs[-2]
+    stoch_k, stoch_d, slow_d = compute_stoch(highs, lows, closes, k_period=5, d_period=3, smooth_k=3)
+    if len(stoch_k) < 2:
+        print(f"[WARNING] {symbol} - Gagal menghitung Stochastic, data terlalu pendek")
+        return None
+    atr = compute_atr(data, period=14)
+    if atr == 0:
+        print(f"[WARNING] {symbol} - ATR tidak valid")
+        return None
+
+    print(f"\n[DEBUG] {symbol} - Stoch K: {stoch_k[-1]:.2f}, Stoch D: {stoch_d[-1]:.2f}, ATR: {atr:.4f}")
+
+    # Kondisi Pump: Oversold + Crossover + Volume Spike
+    oversold = stoch_k[-1] < 20 and stoch_d[-1] < 20
+    bullish_crossover = stoch_k[-1] > stoch_d[-1] and stoch_k[-2] <= stoch_d[-2]
+    volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1]) if len(volumes) > 10 else False
+    breakout = last_close > prev_high  # Konfirmasi breakout
+
+    print(f"[DEBUG] Pump - Oversold: {oversold}, Bullish Crossover: {bullish_crossover}, Volume Spike: {volume_spike}, Breakout: {breakout}")
+
+    if oversold and bullish_crossover and volume_spike and breakout:
+        sl = last_close - atr
+        risk = last_close - sl
+        tp = last_close + (risk * MIN_RR)
+
+        if risk <= 0 or (tp - last_close) / risk < MIN_RR:
+            print(f"[WARNING] {symbol} - Risk tidak valid untuk pump")
+            return None
+
+        signal_key = f"{symbol}-pump-{last_close:.4f}-{tp:.4f}-{sl:.4f}"
+        if signal_key in sent_signals:
+            return None
+        sent_signals.add(signal_key)
+
+        msg = (
+            f"🟢 PUMP DETECTION [Futures]: {symbol}\n"
+            f"Entry: {last_close:.4f}\nTP: {tp:.4f}\nSL: {sl:.4f}\nRR: {(tp - last_close) / (last_close - sl):.2f}:1"
+        )
+        chart_path = generate_chart(symbol, data, last_close, tp, sl, stoch_k, stoch_d)
+        return msg, chart_path
+
+    return None
+
+# === MAIN LOOP ===
+while True:
+    print(f"[{datetime.now()}] Scanning futures market for pumps...")
     try:
-        clean_sent_signals()
-        refresh_exchange()
-        symbols = get_symbols()
-        if not symbols:
-            logging.warning("No symbols found, retrying in next scan")
-            return
+        markets = EXCHANGE.load_markets()
+        symbols = [symbol for symbol in markets.keys()
+                   if markets[symbol]['swap'] and markets[symbol]['contract'] and markets[symbol]['quote'] == 'USDT' and '/' in symbol]
 
         for symbol in symbols:
-            try:
-                data = get_ohlcv(symbol, TIMEFRAME, limit=100)
-                if data is None or len(data) < 50:
-                    logging.warning(f"Insufficient data for {symbol}")
-                    continue
-
-                closes = data[:, 4]
-                k, d = compute_stoch_rsi(closes)
-                ema = compute_ema(closes, EMA_PERIOD)
-                if k is None or d is None or ema is None:
-                    logging.info(f"[SCREEN] {symbol} - Trend: N/A, K: N/A, D: N/A, Price: N/A, Signal: False (Indicator calculation failed)")
-                    continue
-
-                price = closes[-1]
-                trend = "bullish" if price > ema[-1] else "bearish"
-                signal = is_cross_up(k, d, price, ema)
-
-                # Log screening information for each coin
-                logging.info(
-                    f"[SCREEN] {symbol} - Trend: {trend}, K: {k[-1]:.2f}, D: {d[-1]:.2f}, Price: {price:.4f}, Signal: {signal}"
-                )
-
-                if signal:
-                    time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    signal_key = f"{symbol}-{time_str}-{price:.2f}"
-                    if signal_key in sent_signals:
-                        continue
-                    sent_signals[signal_key] = time.time()
-
-                    msg = (
-                        f"⚡ STOCH RSI CROSSING ({symbol})\n"
-                        f"Cross at oversold (K={k[-1]:.2f}, D={d[-1]:.2f})\n"
-                        f"Price: {price:.4f} (Above EMA{EMA_PERIOD})\n"
-                        f"Time: {time_str}"
-                    )
-                    chart = generate_chart(symbol, data)
+            data = get_ohlcv(symbol, TIMEFRAME, limit=100)
+            if data is not None:
+                result = detect_pump(symbol, data)
+                if result:
+                    msg, chart = result
+                    print(f"[{datetime.now()}] {symbol} PUMP SIGNAL! (Futures)")
                     send_telegram(msg, chart)
-                    logging.info(f"SIGNAL! {symbol} at {price:.4f}")
+            time.sleep(1)  # Delay untuk rate limit
 
-            except Exception as e:
-                logging.error(f"Error processing {symbol}: {e}")
-                continue
+        print(f"[{datetime.now()}] Selesai scanning (Futures), tunggu {CHECK_INTERVAL / 60} menit...\n")
+        time.sleep(CHECK_INTERVAL)
 
-        logging.info(f"Scan completed, waiting {CHECK_INTERVAL/60} minutes...")
     except Exception as e:
-        logging.error(f"Critical error in scan: {e}")
-        send_telegram(f"⚠️ CRITICAL ERROR: {e}")
-
-def run_loop():
-    next_run = datetime.now().replace(second=0, microsecond=0)
-    while True:
-        current_time = datetime.now()
-        if current_time >= next_run:
-            scan()
-            next_run = (current_time + timedelta(seconds=CHECK_INTERVAL)).replace(second=0, microsecond=0)
-        time.sleep(1)
-
-def signal_handler(sig, frame):
-    logging.info("Shutting down bot gracefully")
-    send_telegram("⚠️ Bot stopped")
-    exit(0)
-
-if __name__ == "__main__":
-    logging.info("Starting trading bot...")
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-    run_loop()
+        print(f"ERROR: {e}")
+        send_telegram(f"\u274c Error saat scan (Futures): {e}")
+        time.sleep(60)

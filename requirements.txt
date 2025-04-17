@@ -1,7 +1,6 @@
-ccxt
+ccxt>=4.3.0
 pandas
-pandas-ta
-numpy==1.26.4
-matplotlib
+numpy
 mplfinance
 requests
+matplotlib
