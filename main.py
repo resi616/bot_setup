@@ -2,8 +2,7 @@ import ccxt
 import time
 import requests
 import numpy as np
-from datetime import datetime
-
+from datetime import datetime, timezone
 
 # === CONFIGURATION ===
 TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
@@ -43,7 +42,7 @@ def compute_stochastic(data, k_period=5, d_period=3):
         k_values.append(k)
 
     d_values = [np.mean(k_values[i - d_period + 1:i + 1]) for i in range(d_period - 1, len(k_values))]
-    k_values = k_values[d_period - 1:]  # Sesuaikan panjang k_values dengan d_values
+    k_values = k_values[d_period - 1:]
     return k_values, d_values
 
 def detect_pump_cross(symbol, data):
@@ -51,18 +50,18 @@ def detect_pump_cross(symbol, data):
     if len(k) < 2 or len(d) < 2:
         return None
 
-    # Cek crossing dan oversold
     if k[-2] < d[-2] and k[-1] > d[-1] and k[-1] < 20 and d[-1] < 20:
         last_price = data[-1, 4]
-        signal_key = f"{symbol}-{last_price:.4f}-{datetime.now(datetime.UTC).isoformat()[:13]}"
+        timestamp = datetime.now(timezone.utc).isoformat()[:13]
+        signal_key = f"{symbol}-{last_price:.4f}-{timestamp}"
         if signal_key in sent_alerts:
             return None
         sent_alerts.add(signal_key)
 
         msg = (
-            f"🟢 POTENSI PUMP TERDETEKSI!"
-            f"Symbol: {symbol}"
-            f"Harga Terakhir: {last_price:.4f}"
+            f"🟢 POTENSI PUMP TERDETEKSI!\n"
+            f"Symbol: {symbol}\n"
+            f"Harga Terakhir: {last_price:.4f}\n"
             f"Stoch K: {k[-1]:.2f}, D: {d[-1]:.2f} (crossing di bawah 20)"
         )
         return msg
