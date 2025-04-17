@@ -1,6 +1,8 @@
 ccxt
-requests
-numpy
 pandas
+pandas-ta
+numpy
 matplotlib
 mplfinance
+requests
+prometheus-client
