@@ -100,6 +100,7 @@ while True:
                 ticker = EXCHANGE.fetch_ticker(s)
                 if ticker['quoteVolume'] > MIN_VOLUME_24H:
                     symbols.append(s)
+                    time.sleep(0.2)
             except:
                 continue
 
