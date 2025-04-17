@@ -4,9 +4,9 @@ import requests
 import numpy as np
 from datetime import datetime
 
-# === CONFIG ===
-TELEGRAM_TOKEN = '7881384249:AAFLRCsETKh6Mr4Dh0s3KdSjrDdNdwNn2G4'
-CHAT_ID = '-1002520925418'
+# === CONFIGURATION ===
+TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
+CHAT_ID = '-1002643789070'
 EXCHANGE = ccxt.binance()
 TIMEFRAME = '15m'
 CHECK_INTERVAL = 60 * 15  # 15 menit
@@ -33,43 +33,43 @@ def compute_stochastic(data, k_period=5, d_period=3):
     highs = data[:, 2]
     lows = data[:, 3]
     closes = data[:, 4]
+    k_values = []
 
-    stoch_k = []
     for i in range(k_period - 1, len(closes)):
-        low_min = np.min(lows[i - k_period + 1:i + 1])
         high_max = np.max(highs[i - k_period + 1:i + 1])
+        low_min = np.min(lows[i - k_period + 1:i + 1])
         k = 100 * (closes[i] - low_min) / (high_max - low_min) if high_max != low_min else 0
-        stoch_k.append(k)
+        k_values.append(k)
 
-    stoch_d = [np.mean(stoch_k[i - d_period + 1:i + 1]) for i in range(d_period - 1, len(stoch_k))]
-    return stoch_k[-len(stoch_d):], stoch_d
+    d_values = [np.mean(k_values[i - d_period + 1:i + 1]) for i in range(d_period - 1, len(k_values))]
+    k_values = k_values[d_period - 1:]  # Sesuaikan panjang k_values dengan d_values
+    return k_values, d_values
 
-def detect_stoch_cross(symbol, data):
-    stoch_k, stoch_d = compute_stochastic(data)
-    if len(stoch_k) < 2 or len(stoch_d) < 2:
+def detect_pump_cross(symbol, data):
+    k, d = compute_stochastic(data)
+    if len(k) < 2 or len(d) < 2:
         return None
 
-    # Check crossing %K naik menembus %D (bullish cross)
-    if stoch_k[-2] < stoch_d[-2] and stoch_k[-1] > stoch_d[-1]:
-        key = f"{symbol}-{int(data[-1, 0] / 1000)}"
-        if key in sent_alerts:
-            return None  # Skip duplikat
-        sent_alerts.add(key)
+    # Cek crossing dan oversold
+    if k[-2] < d[-2] and k[-1] > d[-1] and k[-1] < 20 and d[-1] < 20:
+        last_price = data[-1, 4]
+        signal_key = f"{symbol}-{last_price:.4f}-{datetime.utcnow().isoformat()[:13]}"
+        if signal_key in sent_alerts:
+            return None
+        sent_alerts.add(signal_key)
 
         msg = (
-            f"🚨 POSSIBLE PUMP DETECTED!\n"
-            f"Symbol: {symbol}\n"
-            f"Timeframe: {TIMEFRAME}\n"
-            f"Stoch %K: {stoch_k[-2]:.2f} -> {stoch_k[-1]:.2f}\n"
-            f"Stoch %D: {stoch_d[-2]:.2f} -> {stoch_d[-1]:.2f}\n"
-            f"📈 Crossing Terjadi: Bullish"
+            f"🟢 POTENSI PUMP TERDETEKSI!"
+            f"Symbol: {symbol}"
+            f"Harga Terakhir: {last_price:.4f}"
+            f"Stoch K: {k[-1]:.2f}, D: {d[-1]:.2f} (crossing di bawah 20)"
         )
         return msg
     return None
 
 # === MAIN LOOP ===
 while True:
-    print(f"[{datetime.now()}] Scanning market for possible pump...")
+    print(f"[{datetime.now()}] Mulai screening pump...")
     try:
         symbols = [m['symbol'] for m in EXCHANGE.load_markets().values()
                    if m['quote'] == 'USDT' and m['spot'] and '/' in m['symbol']]
@@ -77,9 +77,9 @@ while True:
         for symbol in symbols:
             data = get_ohlcv(symbol, TIMEFRAME)
             if data is not None:
-                signal = detect_stoch_cross(symbol, data)
+                signal = detect_pump_cross(symbol, data)
                 if signal:
-                    print(f"[{datetime.now()}] ALERT: {symbol} - Crossing Terdeteksi")
+                    print(f"[{datetime.now()}] {symbol} pump terdeteksi!")
                     send_telegram(signal)
 
         print(f"[{datetime.now()}] Selesai scanning, tunggu {CHECK_INTERVAL / 60} menit...\n")
@@ -87,5 +87,5 @@ while True:
 
     except Exception as e:
         print(f"ERROR: {e}")
-        send_telegram(f"❌ Error saat scanning: {e}")
+        send_telegram(f"\u274c Error saat scan: {e}")
         time.sleep(60)
