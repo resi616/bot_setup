@@ -4,6 +4,7 @@ import requests
 import numpy as np
 from datetime import datetime
 
+
 # === CONFIGURATION ===
 TELEGRAM_TOKEN = '7723680969:AAFABMNNFD4OU645wvMfp_AeRVgkMlEfzwI'
 CHAT_ID = '-1002643789070'
@@ -53,7 +54,7 @@ def detect_pump_cross(symbol, data):
     # Cek crossing dan oversold
     if k[-2] < d[-2] and k[-1] > d[-1] and k[-1] < 20 and d[-1] < 20:
         last_price = data[-1, 4]
-        signal_key = f"{symbol}-{last_price:.4f}-{datetime.utcnow().isoformat()[:13]}"
+        signal_key = f"{symbol}-{last_price:.4f}-{datetime.now(datetime.UTC).isoformat()[:13]}"
         if signal_key in sent_alerts:
             return None
         sent_alerts.add(signal_key)
