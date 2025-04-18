@@ -5,11 +5,11 @@ import numpy as np
 from datetime import datetime, timezone
 
 # === CONFIGURATION ===
-TELEGRAM_TOKEN = '7881384249:AAFLRCsETKh6Mr4Dh0s3KdSjrDdNdwNn2G4'
+TELEGRAM_TOKEN = '7315138903:AAE5K-v1njvgqSkJiazHYJFD57jEf3WqdSM'
 CHAT_ID = '-1002520925418'
 EXCHANGE = ccxt.binance()
-TIMEFRAME = '15m'
-CHECK_INTERVAL = 60 * 15  # 15 menit
+TIMEFRAME = '5m'
+CHECK_INTERVAL = 60 * 5  # 5 menit
 
 sent_alerts = set()
 
@@ -45,24 +45,26 @@ def compute_stochastic(data, k_period=5, d_period=3):
     k_values = k_values[d_period - 1:]
     return k_values, d_values
 
-def detect_pump_cross(symbol, data):
+def detect_stoch_cross(symbol, data):
     k, d = compute_stochastic(data)
-    if len(k) < 2 or len(d) < 2:
+    if len(k) < 3 or len(d) < 3:
         return None
 
-    if k[-2] < d[-2] and k[-1] > d[-1] and k[-1] < 20 and d[-1] < 20:
+    if (
+        k[-3] < d[-3] and k[-3] < 20 and d[-3] < 20 and
+        k[-2] > d[-2] and k[-2] > 20 and d[-2] > 20
+    ):
         last_price = data[-1, 4]
-        timestamp = datetime.now(timezone.utc).isoformat()[:13]
-        signal_key = f"{symbol}-{last_price:.4f}-{timestamp}"
+        signal_key = f"{symbol}-{last_price:.4f}-{datetime.now(timezone.utc).isoformat()[:13]}"
         if signal_key in sent_alerts:
             return None
         sent_alerts.add(signal_key)
 
         msg = (
-            f"🟢 POTENSI PUMP TERDETEKSI!\n"
+            f"🟢 CROSSING STOCH DETECTED!\n"
             f"Symbol: {symbol}\n"
             f"Harga Terakhir: {last_price:.4f}\n"
-            f"Stoch K: {k[-1]:.2f}, D: {d[-1]:.2f} (crossing di bawah 20)"
+            f"K: {k[-2]:.2f}, D: {d[-2]:.2f} (cross di atas 20 dari bawah)"
         )
         return msg
     return None
@@ -77,9 +79,9 @@ while True:
         for symbol in symbols:
             data = get_ohlcv(symbol, TIMEFRAME)
             if data is not None:
-                signal = detect_pump_cross(symbol, data)
+                signal = detect_stoch_cross(symbol, data)
                 if signal:
-                    print(f"[{datetime.now()}] {symbol} pump terdeteksi!")
+                    print(f"[{datetime.now()}] {symbol} crossing terdeteksi!")
                     send_telegram(signal)
 
         print(f"[{datetime.now()}] Selesai scanning, tunggu {CHECK_INTERVAL / 60} menit...\n")
