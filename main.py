@@ -64,7 +64,7 @@ def compute_rsi(closes, period=14):
 
 def detect_stoch_cross(symbol, data):
     k, d = compute_stochastic(data)
-    if len(k) < 2 or len(d) < 2:
+    if len(k) < 5 or len(d) < 5:
         return None
 
     closes = data[:, 4]
@@ -72,30 +72,30 @@ def detect_stoch_cross(symbol, data):
     highs = data[:, 2]
     rsi = compute_rsi(closes)
 
-    # Cek crossing di 2 candle sebelumnya
-    if (
-        k[-2] < d[-2] and k[-2] < 20 and d[-2] < 20 and
-        k[-1] > d[-1] and k[-1] > 20 and d[-1] > 20
-    ):
-        volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
-        breakout = closes[-1] > np.max(highs[-6:-1])
+    for i in range(-5, -1):
+        if (
+            k[i-1] < d[i-1] and k[i-1] < 20 and d[i-1] < 20 and
+            k[i] > d[i] and k[i] > 20 and d[i] > 20
+        ):
+            volume_spike = volumes[-1] > 1.5 * np.mean(volumes[-10:-1])
+            breakout = closes[-1] > np.max(highs[-6:-1])
 
-        if volume_spike and breakout and rsi[-1] > 50:
-            last_price = closes[-1]
-            k_now = k[-1]
-            d_now = d[-1]
-            signal_key = f"{symbol}-{last_price:.4f}-{k_now:.2f}-{d_now:.2f}"
-            if signal_key in sent_alerts:
-                return None
-            sent_alerts.add(signal_key)
+            if volume_spike and breakout and rsi[-1] > 50:
+                last_price = closes[-1]
+                k_now = k[-1]
+                d_now = d[-1]
+                signal_key = f"{symbol}-{last_price:.4f}-{k_now:.2f}-{d_now:.2f}"
+                if signal_key in sent_alerts:
+                    return None
+                sent_alerts.add(signal_key)
 
-            msg = (
-                f"🟢 CROSSING STOCH DETECTED!\n"
-                f"Symbol: {symbol}\n"
-                f"Harga Terakhir: {last_price:.4f}\n"
-                f"K: {k_now:.2f}, D: {d_now:.2f} (cross di atas 20 dari bawah)"
-            )
-            return msg
+                msg = (
+                    f"🟢 CROSSING STOCH DETECTED!\n"
+                    f"Symbol: {symbol}\n"
+                    f"Harga Terakhir: {last_price:.4f}\n"
+                    f"K: {k_now:.2f}, D: {d_now:.2f} (cross di atas 20 dari bawah)"
+                )
+                return msg
     return None
 
 # === MAIN LOOP ===
