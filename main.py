@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime, timezone
 
 # === CONFIGURATION ===
-TELEGRAM_TOKEN = '7315138903:AAE5K-v1njvgqSkJiazHYJFD57jEf3WqdSM'
+TELEGRAM_TOKEN = '8152840476:AAHqFTaJn67tLlIwnBWjEZbt5wyvl09FfiI'
 CHAT_ID = '-1002520925418'
 EXCHANGE = ccxt.binance()
 TIMEFRAME = '5m'
