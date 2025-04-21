@@ -1,6 +1,5 @@
-ccxt>=4.3.0
+python-binance
+binance-futures-connector
+aiohttp
 pandas
 numpy
-mplfinance
-requests
-matplotlib
